@@ -13,7 +13,8 @@ W 1529 P_MODE        plain=2a 47 ff raw=... ERROR BleakError: ...
 ```
 
 `plain` = before encryption (writes) or after decryption (reads), `raw` = bytes on the air.
-While connected, progress (1527) and status (1524) are read every 6 s.
+While connected, status (1524) is read every 6 s by the debug tools; progress (1527) is read
+by the integration itself (every 5 s, every 1 s during a product), and traced too.
 
 ## Diagnostics
 

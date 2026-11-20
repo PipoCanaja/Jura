@@ -138,7 +138,10 @@ class Device:
     @staticmethod
     def debug_poll(recording: bool) -> dict[str, float]:
         interval = POLL_RECORDING if recording else DEBUG_POLL_IDLE
-        return {UUIDs.PROGRESS: interval, UUIDs.MACHINE_STATUS: interval}
+        if recording:
+            return {UUIDs.PROGRESS: interval, UUIDs.MACHINE_STATUS: interval}
+        # progress is already polled by Device (and traced)
+        return {UUIDs.MACHINE_STATUS: interval}
 
     def register_debug_update(self, handler: Callable):
         self.updates_debug.append(handler)
