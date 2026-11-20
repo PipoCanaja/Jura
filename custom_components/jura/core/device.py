@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, TypedDict
@@ -7,11 +8,14 @@ from zipfile import ZipFile
 import xmltodict
 from bleak import AdvertisementData, BLEDevice
 
-from .client import Client
+from .client import STATS_MAINTENANCE_COUNTERS, STATS_MAINTENANCE_PERCENT, Client
+from .maintenance import get_maintenance, parse_counters, parse_percent
 
 _LOGGER = logging.getLogger(__name__)
 
 COMMAND_TIME = 15
+# maintenance statistics change slowly
+MAINTENANCE_INTERVAL = 600
 SELECTS = [
     "product",  # 1
     "grinder_ratio",  # 2
@@ -50,6 +54,7 @@ class Device:
         alerts: dict[int, str],
         key: int,
         device: BLEDevice,
+        maintenance: dict[str, list[str]] | None = None,
     ):
         self.name = name
         self.model = model
@@ -71,6 +76,13 @@ class Device:
         self.updates_alerts = []
         self.statistics = {"total_products": None, "product_counts": {}}
         self.active_alerts = {}
+
+        # process types shown by the machine: {"counters": [...], "percent": [...]}
+        self.maintenance = maintenance or {"counters": [], "percent": []}
+        self.maintenance_counters: dict[str, int] = {}
+        self.maintenance_percent: dict[str, int] = {}
+        self.maintenance_time = 0
+        self.updates_maintenance: list[Callable] = []
 
     @property
     def mac(self) -> str:
@@ -281,6 +293,52 @@ class Device:
 
         return self.statistics
 
+    def register_maintenance_update(self, handler: Callable):
+        self.updates_maintenance.append(handler)
+
+    async def read_maintenance(self, force_update: bool = False):
+        """Read maintenance counters and percentages (every 10 min)."""
+        if not force_update and time.time() - self.maintenance_time < MAINTENANCE_INTERVAL:
+            return
+        if not self.maintenance["counters"] and not self.maintenance["percent"]:
+            return
+
+        updated = False
+
+        if self.maintenance["counters"]:
+            data = await self.client.read_statistics_data(
+                stats_type=STATS_MAINTENANCE_COUNTERS
+            )
+            if data:
+                _LOGGER.debug("Maintenance counters data: %s", bytes(data).hex(" "))
+                self.maintenance_counters = parse_counters(
+                    bytes(data), self.maintenance["counters"]
+                )
+                updated = True
+
+        if self.maintenance["percent"]:
+            data = await self.client.read_statistics_data(
+                stats_type=STATS_MAINTENANCE_PERCENT
+            )
+            if data:
+                _LOGGER.debug("Maintenance percent data: %s", bytes(data).hex(" "))
+                self.maintenance_percent = parse_percent(
+                    bytes(data), self.maintenance["percent"]
+                )
+                updated = True
+
+        if not updated:
+            return
+
+        self.maintenance_time = time.time()
+        _LOGGER.debug(
+            "Maintenance: counters=%s percent=%s",
+            self.maintenance_counters,
+            self.maintenance_percent,
+        )
+        for handler in self.updates_maintenance:
+            handler()
+
     def register_alert_update(self, handler: Callable):
         """Register a callback for alert updates."""
         self.updates_alerts.append(handler)
@@ -358,8 +416,16 @@ def get_machine(adv: bytes) -> dict | None:
             except:
                 alerts = {}
 
+            maintenance = get_maintenance(raw["JOE"])
+
     # First byte is the encryption key
-    return {"model": items[1], "products": products, "alerts": alerts, "key": adv[0]}
+    return {
+        "model": items[1],
+        "products": products,
+        "alerts": alerts,
+        "maintenance": maintenance,
+        "key": adv[0],
+    }
 
 
 def get_options(products: list[dict]) -> dict[str, list]:

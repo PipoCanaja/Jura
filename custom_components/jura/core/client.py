@@ -27,6 +27,11 @@ CONNECT_TIMEOUT = 20
 
 HEARTBEAT = bytes([0x00, 0x7F, 0x80])
 
+# statistics request types (CoffeeMachineBleCommandParser.d in the J.O.E. app)
+STATS_PRODUCTS = 1
+STATS_MAINTENANCE_COUNTERS = 4
+STATS_MAINTENANCE_PERCENT = 8
+
 
 class UUIDs:
     """BLE characteristic UUIDs."""
@@ -247,10 +252,14 @@ class Client:
                 op.future.set_exception(ConnectionError("connection closed"))
 
     async def read_statistics_data(
-        self, timeout: int = 20, retries: int = 30
+        self, timeout: int = 20, retries: int = 30, stats_type: int = STATS_PRODUCTS
     ) -> bytes | None:
-        """Read statistics data from the device."""
-        _LOGGER.debug("Reading Jura statistics...")
+        """Read statistics data from the device.
+
+        stats_type: STATS_PRODUCTS (product counters),
+        STATS_MAINTENANCE_COUNTERS or STATS_MAINTENANCE_PERCENT.
+        """
+        _LOGGER.debug("Reading Jura statistics (type %d)...", stats_type)
 
         if not await self.wait_connected(timeout):
             _LOGGER.debug("Failed to establish connection")
@@ -259,9 +268,7 @@ class Client:
         try:
             # Send statistics request command
             # https://github.com/Jutta-Proto/protocol-bt-cpp?tab=readme-ov-file#writing-1
-            await self.write(
-                bytes([0x2A, 0x00, 0x01, 0xFF, 0xFF]), UUIDs.STATS_COMMAND
-            )
+            await self.write(stats_request(stats_type), UUIDs.STATS_COMMAND)
 
             # Wait for statistics to be ready
             # https://github.com/Jutta-Proto/protocol-bt-cpp?tab=readme-ov-file#reading
@@ -302,3 +309,11 @@ def encrypt(data: bytes | list, key: int) -> bytes:
     data = bytearray(data)
     data[0] = key
     return encryption.encdec(data, key)
+
+
+def stats_request(stats_type: int) -> bytes:
+    """[key, type (16 bits), ...]: products use a product bitmask (all here),
+    the other types a single 0x01 byte."""
+    if stats_type == STATS_PRODUCTS:
+        return bytes([0x00, 0x00, STATS_PRODUCTS, 0xFF, 0xFF])
+    return bytes([0x00, 0x00, stats_type, 0x01, 0x00])
