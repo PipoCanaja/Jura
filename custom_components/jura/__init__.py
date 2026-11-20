@@ -6,6 +6,7 @@ from homeassistant.core import HomeAssistant, callback
 
 from .core import DOMAIN
 from .core.device import Device, EmptyModel, UnsupportedModel, get_machine
+from .core.debug import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -14,6 +15,9 @@ PLATFORMS = ["binary_sensor", "button", "number", "select", "switch", "sensor"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     devices = hass.data.setdefault(DOMAIN, {})
+
+    # debug tools (fork only)
+    async_setup_services(hass)
 
     @callback
     def update_ble(

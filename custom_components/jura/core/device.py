@@ -7,7 +7,8 @@ from zipfile import ZipFile
 import xmltodict
 from bleak import AdvertisementData, BLEDevice
 
-from .client import Client
+from .client import Client, UUIDs
+from .debug import POLL_IDLE, POLL_RECORDING, Tracer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,6 +73,14 @@ class Device:
         self.statistics = {"total_products": None, "product_counts": {}}
         self.active_alerts = {}
 
+        # debug tools (fork only)
+        self.debug_info: dict = {}
+        self.updates_debug: list = []
+        self._debug_progress = None
+        self.client.tracer = Tracer()
+        self.client.tracer.listeners.append(self._debug_frame)
+        self.client.poll = self.debug_poll(recording=False)
+
     @property
     def mac(self) -> str:
         return self.client.device.address
@@ -87,6 +96,11 @@ class Device:
     def update_ble(self, advertisment: AdvertisementData):
         self.conn_info["last_seen"] = datetime.now(timezone.utc)
         self.conn_info["rssi"] = advertisment.rssi
+        self.debug_info["manufacturer_data"] = {
+            str(k): bytes(v).hex(" ")
+            for k, v in (advertisment.manufacturer_data or {}).items()
+        }
+        self.debug_info["name"] = advertisment.local_name
 
         for handler in self.updates_connect:
             handler()
@@ -95,6 +109,23 @@ class Device:
         self.connected = connected
 
         for handler in self.updates_connect:
+            handler()
+
+    @staticmethod
+    def debug_poll(recording: bool) -> dict[str, float]:
+        interval = POLL_RECORDING if recording else POLL_IDLE
+        return {UUIDs.PROGRESS: interval, UUIDs.MACHINE_STATUS: interval}
+
+    def register_debug_update(self, handler: Callable):
+        self.updates_debug.append(handler)
+
+    def _debug_frame(self):
+        last = self.client.tracer.last.get("1527")
+        plain = last["plain"] if last else None
+        if plain == self._debug_progress:
+            return
+        self._debug_progress = plain
+        for handler in self.updates_debug:
             handler()
 
     def selects(self) -> list[str]:

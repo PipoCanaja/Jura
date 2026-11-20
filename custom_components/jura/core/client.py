@@ -41,6 +41,8 @@ class UUIDs:
     STATS_DATA = "5A401534-ab2e-2548-c435-08c300000710"
     # Status
     MACHINE_STATUS = "5a401524-ab2e-2548-c435-08c300000710"
+    # Product / process progress
+    PROGRESS = "5a401527-ab2e-2548-c435-08c300000710"
 
 
 @dataclass
@@ -52,6 +54,8 @@ class Operation:
     decrypt: bool = False
     # fire-and-forget commands are replaced by a newer one for the same uuid
     replaceable: bool = False
+    # write only: False sends data as is (no key, no encryption)
+    encrypt: bool = True
     expires: float = 0
     future: asyncio.Future | None = field(default=None, repr=False)
 
@@ -82,6 +86,17 @@ class Client:
         self.wake = asyncio.Event()
         self.connected = asyncio.Event()
 
+        # debug: called for every frame (see core/debug.py)
+        self.tracer = None
+        # debug: characteristics read periodically while connected {uuid: seconds}
+        self.poll: dict[str, float] = {}
+        self._poll_time: dict[str, float] = {}
+        # debug: keep the connection open regardless of ping_time
+        self.keep_alive = False
+
+    def _active(self) -> bool:
+        return self.keep_alive or time.time() < self.ping_time
+
     def ping(self):
         """Keep (or open) the connection for ACTIVE_TIME seconds."""
         self.ping_time = time.time() + ACTIVE_TIME
@@ -92,6 +107,7 @@ class Client:
     def ping_cancel(self):
         """Close the connection as soon as possible."""
         self.ping_time = 0
+        self.keep_alive = False
         self.wake.set()
 
     def send(self, data: bytes, uuid: str = UUIDs.START_PRODUCT):
@@ -115,9 +131,12 @@ class Client:
         self.ping()
         self.wake.set()
 
-    async def write(self, data: bytes, uuid: str, timeout: float = OP_TIMEOUT):
+    async def write(
+        self, data: bytes, uuid: str, timeout: float = OP_TIMEOUT, encrypt: bool = True
+    ):
         """Queue a write and wait for its result. Raises on GATT error."""
-        await self._run(Operation(uuid=uuid, data=bytes(data)), timeout)
+        op = Operation(uuid=uuid, data=bytes(data), encrypt=encrypt)
+        await self._run(op, timeout)
 
     async def read(self, uuid: str, decrypt: bool = False, timeout: float = OP_TIMEOUT):
         """Queue a read and wait for its (optionally decrypted) value."""
@@ -139,17 +158,57 @@ class Client:
         self.wake.set()
         return await asyncio.wait_for(op.future, timeout)
 
+    def _trace(self, direction: str, uuid: str, plain, raw, error=None):
+        if self.tracer:
+            try:
+                self.tracer.add(direction, uuid, plain, raw, error)
+            except Exception as e:
+                _LOGGER.debug("trace error", exc_info=e)
+
+    def _decrypt(self, data) -> bytes | None:
+        if self.key is None:
+            return None
+        return encryption.encdec(list(data), self.key)
+
     async def _execute(self, op: Operation):
         if op.is_read:
-            data = await self.client.read_gatt_char(op.uuid)
-            if op.decrypt and self.key is not None:
-                return encryption.encdec(list(data), self.key)
+            try:
+                data = await self.client.read_gatt_char(op.uuid)
+            except Exception as e:
+                self._trace("R", op.uuid, None, None, e)
+                raise
+            plain = self._decrypt(data)
+            self._trace("R", op.uuid, plain, data)
+            if op.decrypt and plain is not None:
+                return plain
             return data
 
-        await self.client.write_gatt_char(
-            op.uuid, data=encrypt(op.data, self.key), response=True
-        )
+        if op.encrypt:
+            plain = bytearray(op.data)
+            plain[0] = self.key
+            raw = encrypt(op.data, self.key)
+        else:
+            plain = raw = bytes(op.data)
+        try:
+            await self.client.write_gatt_char(op.uuid, data=raw, response=True)
+        except Exception as e:
+            self._trace("W", op.uuid, plain, raw, e)
+            raise
+        self._trace("W", op.uuid, plain, raw)
         return None
+
+    async def _poll(self):
+        now = time.time()
+        for uuid, interval in list(self.poll.items()):
+            if now - self._poll_time.get(uuid, 0) < interval:
+                continue
+            self._poll_time[uuid] = now
+            try:
+                await self._execute(Operation(uuid=uuid))
+            except Exception as e:
+                _LOGGER.debug("poll error %s", uuid, exc_info=e)
+                if not self.client.is_connected:
+                    raise
 
     async def _process_queue(self):
         while self.queue:
@@ -180,9 +239,7 @@ class Client:
         # important dummy write to keep the connection
         # https://github.com/Jutta-Proto/protocol-bt-cpp?tab=readme-ov-file#heartbeat
         try:
-            await self.client.write_gatt_char(
-                UUIDs.P_MODE, data=encrypt(HEARTBEAT, self.key), response=True
-            )
+            await self._execute(Operation(uuid=UUIDs.P_MODE, data=HEARTBEAT))
             _LOGGER.debug("heartbeat sent")
         except Exception as e:
             # we log as info as this is expected if the device is off
@@ -198,7 +255,7 @@ class Client:
         self.wake.clear()
 
     async def _ping_loop(self):
-        while time.time() < self.ping_time:
+        while self._active():
             try:
                 self.client = await establish_connection(
                     BleakClient, self.device, self.device.address
@@ -208,12 +265,14 @@ class Client:
                     self.callback(True)
 
                 last_heartbeat = 0
-                while time.time() < self.ping_time:
+                while self._active():
                     await self._process_queue()
 
                     if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL:
                         await self._heartbeat()
                         last_heartbeat = time.time()
+
+                    await self._poll()
 
                     await self._wait_tick()
             except TimeoutError:

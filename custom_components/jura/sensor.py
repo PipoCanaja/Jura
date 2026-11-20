@@ -10,6 +10,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
@@ -37,6 +38,9 @@ async def async_setup_entry(
 
     # Create alert sensors
     entities.append(JuraAlertSensor(device))
+
+    # Debug (fork only): last raw progress frame
+    entities.append(JuraRawProgressSensor(device))
 
     async_add_entities(entities)
 
@@ -166,5 +170,39 @@ class JuraAlertSensor(JuraEntity, SensorEntity):
     def internal_update(self):
         """Override parent method to ensure alerts are refreshed."""
         _LOGGER.debug(f"Updating alert sensor {self._attr_name}")
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+
+class JuraRawProgressSensor(JuraEntity, SensorEntity):
+    """Debug sensor: last decrypted progress frame (5a401527), as hex."""
+
+    _attr_icon = "mdi:hexadecimal"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, device):
+        super().__init__(device, "progress_raw")
+        self._attr_name = f"{device.name} Progress Raw"
+        device.register_debug_update(self.internal_update)
+
+    @property
+    def native_value(self) -> str | None:
+        last = self.device.client.tracer.last.get("1527")
+        return last["plain"] if last else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        tracer = self.device.client.tracer
+        progress = tracer.last.get("1527") or {}
+        status = tracer.last.get("1524") or {}
+        return {
+            "progress_time": progress.get("t"),
+            "status": status.get("plain"),
+            "status_time": status.get("t"),
+            "recording": tracer.recording is not None,
+        }
+
+    def internal_update(self):
         if self.hass is not None:
             self.async_write_ha_state()
