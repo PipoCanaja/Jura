@@ -97,6 +97,9 @@ async def async_setup_entry(
     for alert_info in ALERT_SENSORS:
         entities.append(JuraAlertBinarySensor(device, alert_info))
 
+    # Product / process running (from the progress characteristic)
+    entities.append(JuraPreparingBinarySensor(device))
+
     add_entities(entities)
 
 
@@ -138,5 +141,22 @@ class JuraAlertBinarySensor(JuraEntity, BinarySensorEntity):
             for _, alert_name in self.device.active_alerts.items()
         )
 
+        if self.hass:
+            self._async_write_ha_state()
+
+
+class JuraPreparingBinarySensor(JuraEntity, BinarySensorEntity):
+    """On while a product or a maintenance process is running."""
+
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+    _attr_icon = "mdi:coffee-maker-outline"
+
+    def __init__(self, device):
+        super().__init__(device, "preparing")
+        device.register_progress_update(self.internal_update)
+
+    def internal_update(self):
+        progress = self.device.progress
+        self._attr_is_on = progress.preparing if progress else None
         if self.hass:
             self._async_write_ha_state()

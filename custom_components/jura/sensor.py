@@ -17,6 +17,7 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from .core import DOMAIN
 from .core.entity import JuraEntity
+from .core.progress import PHASE_NAMES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +42,13 @@ async def async_setup_entry(
 
     # Debug (fork only): last raw progress frame
     entities.append(JuraRawProgressSensor(device))
+
+    # Progress sensors (from the progress characteristic)
+    entities += [
+        JuraMachineStateSensor(device),
+        JuraPhaseSensor(device),
+        JuraProgressSensor(device),
+    ]
 
     async_add_entities(entities)
 
@@ -203,6 +211,83 @@ class JuraRawProgressSensor(JuraEntity, SensorEntity):
             "recording": tracer.recording is not None,
         }
 
+class JuraProgressEntity(JuraEntity, SensorEntity):
+    """Base class for sensors fed by the progress characteristic."""
+
+    def __init__(self, device, attr: str):
+        super().__init__(device, attr)
+        device.register_progress_update(self.internal_update)
+
     def internal_update(self):
         if self.hass is not None:
             self.async_write_ha_state()
+
+
+
+class JuraMachineStateSensor(JuraProgressEntity):
+    """Machine state, named from the machine XML (PROGRESS_STATE_INTAKE)."""
+
+    _attr_icon = "mdi:coffee-maker"
+
+    def __init__(self, device):
+        super().__init__(device, "machine_state")
+
+    @property
+    def native_value(self) -> str | None:
+        return self.device.state_label()
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        progress = self.device.progress
+        if progress is None:
+            return {}
+        return {
+            "state_code": f"{progress.state:02X}",
+            "code": f"{progress.code:02X}",
+            "product": self.device.code_name(progress.code),
+        }
+
+
+class JuraPhaseSensor(JuraProgressEntity):
+    """Preparation phase: grinding, coffee water, milk, hot water..."""
+
+    _attr_icon = "mdi:progress-clock"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = PHASE_NAMES
+
+    def __init__(self, device):
+        super().__init__(device, "phase")
+
+    @property
+    def native_value(self) -> str | None:
+        progress = self.device.progress
+        return progress.phase if progress and progress.preparing else None
+
+
+class JuraProgressSensor(JuraProgressEntity):
+    """Progress of the current phase, in %."""
+
+    _attr_icon = "mdi:progress-helper"
+    _attr_native_unit_of_measurement = "%"
+
+    def __init__(self, device):
+        super().__init__(device, "progress")
+
+    @property
+    def native_value(self) -> int | None:
+        progress = self.device.progress
+        if not progress or not progress.preparing:
+            return None
+        return progress.ratio
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        progress = self.device.progress
+        if not progress or not progress.preparing:
+            return {}
+        return {
+            "current": progress.current,
+            "max": progress.max,
+            "machine_percent": progress.percent,
+            "product": self.device.code_name(progress.code),
+        }

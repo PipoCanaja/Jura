@@ -138,9 +138,22 @@ class Client:
         op = Operation(uuid=uuid, data=bytes(data), encrypt=encrypt)
         await self._run(op, timeout)
 
-    async def read(self, uuid: str, decrypt: bool = False, timeout: float = OP_TIMEOUT):
-        """Queue a read and wait for its (optionally decrypted) value."""
-        return await self._run(Operation(uuid=uuid, decrypt=decrypt), timeout)
+    async def read(
+        self,
+        uuid: str,
+        decrypt: bool = False,
+        timeout: float = OP_TIMEOUT,
+        ping: bool = True,
+    ):
+        """Queue a read and wait for its (optionally decrypted) value.
+
+        With ping=False the read neither opens nor extends the connection:
+        it returns None when not connected (background polling).
+        """
+        if not ping and not self.connected.is_set():
+            return None
+        op = Operation(uuid=uuid, decrypt=decrypt)
+        return await self._run(op, timeout, ping=ping)
 
     async def wait_connected(self, timeout: float = CONNECT_TIMEOUT) -> bool:
         """Open the connection if needed and wait until it is ready."""
@@ -151,10 +164,11 @@ class Client:
         except asyncio.TimeoutError:
             return False
 
-    async def _run(self, op: Operation, timeout: float):
+    async def _run(self, op: Operation, timeout: float, ping: bool = True):
         op.future = self.loop.create_future()
         self.queue.append(op)
-        self.ping()
+        if ping:
+            self.ping()
         self.wake.set()
         return await asyncio.wait_for(op.future, timeout)
 

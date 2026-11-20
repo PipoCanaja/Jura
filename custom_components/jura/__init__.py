@@ -10,7 +10,7 @@ from .core.debug import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["binary_sensor", "button", "number", "select", "switch", "sensor"]
+PLATFORMS = ["binary_sensor", "button", "event", "number", "select", "switch", "sensor"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
@@ -45,6 +45,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             machine["alerts"],
             machine["key"],
             service_info.device,
+            machine["states"],
+            machine["processes"],
         )
         device.update_ble(service_info.advertisement)
 
