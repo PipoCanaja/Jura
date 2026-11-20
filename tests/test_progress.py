@@ -140,3 +140,9 @@ def test_xml_helpers():
     assert get_states(joe) == {0x3E: "Enjoy", 0x21: "Heating Up", 0xFF: "P_Mode"}
     assert get_processes(joe) == {0x24: "Cleaning", 0x25: "Decalc"}
     assert get_states({}) == {} and get_processes({}) == {}
+
+
+def test_decode_short_frames():
+    # never raise on truncated frames
+    for raw in [b"", b"\x2a", b"\x2a\x41", b"\x2a\x41\x0d", bytes(10)]:
+        decode(raw)

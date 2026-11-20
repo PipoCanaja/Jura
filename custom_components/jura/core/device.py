@@ -219,7 +219,11 @@ class Device:
                     _LOGGER.debug("progress read error", exc_info=e)
                     data = None
                 if data:
-                    self.update_progress(data)
+                    try:
+                        self.update_progress(data)
+                    except Exception as e:
+                        # never let a bad frame stop the polling loop
+                        _LOGGER.warning("progress decode error: %s", data.hex(), exc_info=e)
                 await asyncio.sleep(POLL_TRACKING if self.tracking else POLL_IDLE)
         finally:
             self._progress_task = None
