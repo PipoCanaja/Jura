@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, TypedDict
@@ -7,11 +9,19 @@ from zipfile import ZipFile
 import xmltodict
 from bleak import AdvertisementData, BLEDevice
 
-from .client import Client
+from .client import Client, UUIDs
+from .progress import STATE_ENJOY, Progress, decode
 
 _LOGGER = logging.getLogger(__name__)
 
 COMMAND_TIME = 15
+# progress polling, in seconds
+POLL_IDLE = 5
+POLL_TRACKING = 1
+# fast polling after a start command, until the first progress frame
+TRACK_AFTER_START = 60
+# fast polling continues this long after the last "preparing" frame
+TRACK_GRACE = 30
 SELECTS = [
     "product",  # 1
     "grinder_ratio",  # 2
@@ -50,11 +60,15 @@ class Device:
         alerts: dict[int, str],
         key: int,
         device: BLEDevice,
+        states: dict[int, str] | None = None,
+        processes: dict[int, str] | None = None,
     ):
         self.name = name
         self.model = model
         self.products = products
         self.alerts = alerts
+        self.states = states or {}
+        self.processes = processes or {}
 
         self.client = Client(device, self.set_connected, key)
 
@@ -71,6 +85,12 @@ class Device:
         self.updates_alerts = []
         self.statistics = {"total_products": None, "product_counts": {}}
         self.active_alerts = {}
+
+        self.progress: Progress | None = None
+        self.updates_progress: list[Callable] = []
+        self.updates_finished: list[Callable] = []
+        self.tracking_until = 0
+        self._progress_task: asyncio.Task | None = None
 
     @property
     def mac(self) -> str:
@@ -93,6 +113,9 @@ class Device:
 
     def set_connected(self, connected: bool):
         self.connected = connected
+
+        if connected and not self._progress_task:
+            self._progress_task = self.client.loop.create_task(self._progress_loop())
 
         for handler in self.updates_connect:
             handler()
@@ -167,6 +190,84 @@ class Device:
     def start_product(self):
         if self.product:
             self.client.send(self.command())
+            self.track(TRACK_AFTER_START)
+
+    def track(self, seconds: float):
+        """Poll progress every second (and keep the connection) for a while."""
+        self.tracking_until = max(self.tracking_until, time.time() + seconds)
+
+    @property
+    def tracking(self) -> bool:
+        return time.time() < self.tracking_until
+
+    def register_progress_update(self, handler: Callable):
+        self.updates_progress.append(handler)
+
+    def register_finished(self, handler: Callable):
+        """handler(product_or_process_name: str | None, code: int)"""
+        self.updates_finished.append(handler)
+
+    async def _progress_loop(self):
+        try:
+            while self.connected:
+                tracking = self.tracking
+                try:
+                    data = await self.client.read(
+                        UUIDs.PROGRESS, decrypt=True, ping=tracking
+                    )
+                except Exception as e:
+                    _LOGGER.debug("progress read error", exc_info=e)
+                    data = None
+                if data:
+                    self.update_progress(data)
+                await asyncio.sleep(POLL_TRACKING if self.tracking else POLL_IDLE)
+        finally:
+            self._progress_task = None
+
+    def update_progress(self, data: bytes):
+        progress = decode(data)
+        prev = self.progress
+        self.progress = progress
+
+        if progress.preparing:
+            self.track(TRACK_GRACE)
+
+        if prev is not None and progress.state == STATE_ENJOY:
+            # new Enjoy screen, or a new product finished while we were not
+            # looking (the lingering Enjoy frame is flagged invalid)
+            if prev.state != STATE_ENJOY or (prev.invalid and not progress.invalid):
+                name = self.code_name(progress.code)
+                _LOGGER.debug("finished: %s (0x%02X)", name, progress.code)
+                for handler in self.updates_finished:
+                    handler(name, progress.code)
+
+        if prev is None or prev.raw != progress.raw:
+            for handler in self.updates_progress:
+                handler()
+
+    def product_name(self, code: int) -> str | None:
+        for product in self.products:
+            try:
+                if int(product["@Code"], 16) == code:
+                    return product["@Name"]
+            except (KeyError, ValueError):
+                continue
+        return None
+
+    def code_name(self, code: int) -> str | None:
+        return self.product_name(code) or self.processes.get(code)
+
+    def state_label(self) -> str | None:
+        progress = self.progress
+        if progress is None:
+            return None
+        if progress.invalid:
+            return "idle"
+        if label := self.states.get(progress.state):
+            return label
+        if progress.phase:
+            return progress.phase
+        return f"state 0x{progress.state:02X}"
 
     def command(self) -> bytes:
         data = bytearray(18)
@@ -358,8 +459,48 @@ def get_machine(adv: bytes) -> dict | None:
             except:
                 alerts = {}
 
+            states = get_states(raw["JOE"])
+            processes = get_processes(raw["JOE"])
+
     # First byte is the encryption key
-    return {"model": items[1], "products": products, "alerts": alerts, "key": adv[0]}
+    return {
+        "model": items[1],
+        "products": products,
+        "alerts": alerts,
+        "states": states,
+        "processes": processes,
+        "key": adv[0],
+    }
+
+
+def as_list(value) -> list:
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def get_states(joe: dict) -> dict[int, str]:
+    """PROGRESS_STATE_INTAKE: progress state code -> name."""
+    states = {}
+    intake = joe.get("PROGRESS_STATE_INTAKE") or {}
+    for item in as_list(intake.get("STATE")) + as_list(intake.get("ENJOYSCREEN")):
+        try:
+            states[int(item["@Value"], 16)] = item["@Name"].strip()
+        except (KeyError, ValueError, AttributeError):
+            continue
+    return states
+
+
+def get_processes(joe: dict) -> dict[int, str]:
+    """PROCESSES: process code (from ExecuteCommand @TG:xx) -> type."""
+    processes = {}
+    for item in as_list((joe.get("PROCESSES") or {}).get("PROCESS")):
+        try:
+            code = item["@ExecuteCommand"].split(":")[-1]
+            processes[int(code, 16)] = item["@Type"]
+        except (KeyError, ValueError, AttributeError):
+            continue
+    return processes
 
 
 def get_options(products: list[dict]) -> dict[str, list]:
