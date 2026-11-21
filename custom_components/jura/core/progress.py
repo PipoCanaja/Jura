@@ -22,6 +22,7 @@ process, or of the heating step in the middle of a product (state 0x21).
 from dataclasses import dataclass, field
 
 STATE_IDLE = 0x00
+STATE_P_MODE = 0xFF
 STATE_ENJOY = 0x3E
 EXTENDED = 0x8F
 NO_VALUE = 0xFF
@@ -65,7 +66,13 @@ class Progress:
     @property
     def preparing(self) -> bool:
         """A product or a process is running."""
-        return not self.invalid and self.state not in (STATE_IDLE, STATE_ENJOY)
+        # 0xFF = "P_Mode": the machine shows a menu (e.g. the maintenance
+        # menu before a cleaning), nothing is being prepared
+        return not self.invalid and self.state not in (
+            STATE_IDLE,
+            STATE_ENJOY,
+            STATE_P_MODE,
+        )
 
     @property
     def finished(self) -> bool:

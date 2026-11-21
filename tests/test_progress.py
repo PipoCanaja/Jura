@@ -249,3 +249,51 @@ def test_device_process_finished_without_enjoy():
     assert percents == [13, 47, 93, 100]
     assert events == [("CappuRinse", 100)]
     assert device.state_label() == "idle"
+
+
+# real milk system cleaning (CappuClean, @TG:21), 2026-11-21, started from
+# the machine menu (state 0xFF "P_Mode" frames first)
+P_MODE_MENU = [
+    "2a ff 55 00 00 00 00 01 02 6d 6e 63 00 64 00 00 00 00 00 00",
+    "2a ff 50 00 70 01 03 66 75 00 08 48 77 00 ff 00 00 00 00 00",
+]
+CAPPU_CLEAN = [
+    ("2a 90 21 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00", "Cappu Clean Start"),
+    ("2a 92 21 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00", "Cappu Clean add cleaner"),
+    ("2a 21 21 8f 01 0a 00 00 00 00 00 00 00 00 00 00 00 00 00 00", "Heating Up"),
+    ("2a 93 21 8f 02 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00", "Cappu Clean process"),
+    ("2a 93 21 8f 06 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00", "Cappu Clean process"),
+    ("2a 94 21 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00", "Cappu Clean add water"),
+    ("2a 93 21 8f 0a 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00", "Cappu Clean process"),
+]
+
+
+def test_p_mode_menu_is_not_preparing():
+    device, _ = make_device()
+    for f in P_MODE_MENU:
+        device.update_progress(frame(f))
+        assert not device.progress.preparing
+        assert device.progress_percent() is None
+
+
+def test_device_cappu_clean_sequence():
+    device, _ = make_device()
+    device.processes[0x21] = "CappuClean"
+    device.states.update(
+        {0x21: "Heating Up", 0x90: "Cappu Clean Start", 0x92: "Cappu Clean add cleaner",
+         0x93: "Cappu Clean process", 0x94: "Cappu Clean add water"}
+    )
+    events = []
+    device.register_finished(lambda name, code, last: events.append((name, last)))
+    device.update_progress(frame(IDLE))
+    for f in P_MODE_MENU:
+        device.update_progress(frame(f))
+    for f, label in CAPPU_CLEAN:
+        device.update_progress(frame(f))
+        assert device.progress.preparing
+        assert device.state_label() == label
+    assert device.progress_percent() == 67
+    # the machine dropped the connection at the end of the cleaning; the
+    # next frame read after reconnecting is idle
+    device.update_progress(frame(IDLE))
+    assert events == [("CappuClean", 67)]
