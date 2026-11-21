@@ -78,3 +78,11 @@ def test_parse_percent():
         "Cleaning": 40,
         "Decalc": 90,
     }
+
+
+def test_parse_percent_real_frame():
+    # real machine 2026-11-21 (water filter in use, so no descaling): Cleaning
+    # 0x50, FilterChange 0x32, Decalc 0xFF, then zeros
+    data = bytes.fromhex("50 32 ff" + " 00" * 197)
+    kinds = ["Cleaning", "FilterChange", "Decalc"]
+    assert parse_percent(data, kinds) == {"Cleaning": 80, "FilterChange": 50}
