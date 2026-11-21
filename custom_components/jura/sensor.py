@@ -265,7 +265,7 @@ class JuraPhaseSensor(JuraProgressEntity):
 
 
 class JuraProgressSensor(JuraProgressEntity):
-    """Progress of the current phase, in %."""
+    """Progress of the running product (all phases) or process, in %."""
 
     _attr_icon = "mdi:progress-helper"
     _attr_native_unit_of_measurement = "%"
@@ -275,10 +275,7 @@ class JuraProgressSensor(JuraProgressEntity):
 
     @property
     def native_value(self) -> int | None:
-        progress = self.device.progress
-        if not progress or not progress.preparing:
-            return None
-        return progress.ratio
+        return self.device.progress_percent()
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -286,8 +283,10 @@ class JuraProgressSensor(JuraProgressEntity):
         if not progress or not progress.preparing:
             return {}
         return {
+            "phase": progress.phase,
+            "phase_progress": progress.phase_ratio,
             "current": progress.current,
             "max": progress.max,
-            "machine_percent": progress.percent,
+            "strength": progress.strength,
             "product": self.device.code_name(progress.code),
         }

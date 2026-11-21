@@ -296,6 +296,17 @@ class Device:
     def code_name(self, code: int) -> str | None:
         return self.product_name(code) or self.processes.get(code)
 
+    def progress_percent(self) -> int | None:
+        """Overall progress of the running product or process, in %."""
+        progress = self.progress
+        if progress is None or not progress.preparing:
+            return None
+        if progress.extended and self.product_name(progress.code):
+            # extended frame inside a product (heating up before the first
+            # phase): the product itself has not started yet
+            return 0
+        return progress.ratio
+
     def state_label(self) -> str | None:
         progress = self.progress
         if progress is None:
