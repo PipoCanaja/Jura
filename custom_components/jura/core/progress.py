@@ -6,7 +6,8 @@ on a real machine):
     raw[0]   key
     raw[1]   state      (see PROGRESS_STATE_INTAKE in the machine XML)
     raw[2]   code       product code (PRODUCT@Code) or process code (@TG:xx)
-    raw[3]   0x8F when the frame is "extended" (processes), else payload start
+    raw[3]   0x8F when the frame is "extended" (processes, heating up),
+             else payload start
     raw[15]  0x01 = progress invalid (idle, or the lingering Enjoy screen)
     payload  bytes after state/code (and after 0x8F), with raw[15] removed:
              p[cur] / p[max] depend on the phase (PHASES below)
@@ -17,8 +18,15 @@ on a real machine):
 Coffee phases (grinding 0x31 / 0x39, coffee water 0x37 / 0x3C) carry the
 coffee strength in p[0] (current) and p[1] (value at the start of the
 product): a real espresso started at 3 and turned down to 2 on the machine
-gave p[0] = 2, p[1] = 3. In grinding phases they are not a progress. Extended frames (0x8F) carry current / max of a
-process, or of the heating step in the middle of a product (state 0x21).
+gave p[0] = 2, p[1] = 3. Grinding phases have no other value: no progress
+of their own.
+
+Extended frames (0x8F) carry current / max of a process, or of the heating
+step in the middle of a product (state 0x21).
+
+The Enjoy screen (0x3E) ends a product (also an interrupted one) and stays
+for a while, flagged invalid. Processes have no Enjoy screen: their last
+frame is just flagged invalid. State 0xFF ("P_Mode") is a machine menu.
 """
 
 from dataclasses import dataclass, field
@@ -33,12 +41,12 @@ NO_VALUE = 0xFF
 # from the J.O.E. app (Progress.mapStateToProductProgressState)
 PHASES = {
     0x19: ("smart_alert_pause", 0, 1),
-    0x31: ("milk_grinding", 0, 1),
+    0x31: ("milk_grinding", 0, 1),  # p[0] / p[1] = strength (no progress)
     0x32: ("milk", 4, 5),
     0x33: ("milk_pause", 9, 10),
     0x34: ("milk_foam", 6, 7),
     0x37: ("milk_coffee_water", 2, 3),
-    0x39: ("grinding", 0, 1),
+    0x39: ("grinding", 0, 1),  # p[0] / p[1] = strength (no progress)
     0x3C: ("coffee_water", 2, 3),
     0x40: ("hot_water_temperature", 8, 8),
     0x41: ("hot_water", 2, 3),  # bypass when p[6] != 0xFF
@@ -46,9 +54,9 @@ PHASES = {
 }
 BYPASS = ("bypass_water", 6, 7)
 
-# phases where p[0] / p[1] are the coffee strength, not a progress
+# grinding phases: p[0] / p[1] are the coffee strength, there is no progress
 STRENGTH_PHASES = {0x31, 0x39}
-# phases that carry the coffee strength in p[0] / p[1]
+# all phases that carry the coffee strength in p[0] / p[1]
 COFFEE_PHASES = STRENGTH_PHASES | {0x37, 0x3C}
 
 PHASE_NAMES = sorted({v[0] for v in PHASES.values()} | {BYPASS[0]})
@@ -102,8 +110,6 @@ class Progress:
     @property
     def phase_ratio(self) -> int | None:
         """Progress of the current phase or process step, from current / max."""
-        if self.state in STRENGTH_PHASES:
-            return None
         if self.current is not None and self.max:
             return min(100, round(self.current * 100 / self.max))
         return None
@@ -159,8 +165,9 @@ def decode(raw: bytes | bytearray) -> Progress:
 
     if phase:
         progress.phase, i_cur, i_max = phase
-        progress.current = _get(payload, i_cur)
-        progress.max = _get(payload, i_max)
+        if state not in STRENGTH_PHASES:
+            progress.current = _get(payload, i_cur)
+            progress.max = _get(payload, i_max)
         progress.percent = _get(payload, 12)
     elif extended:
         progress.current = _get(payload, 0)

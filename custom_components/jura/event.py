@@ -17,7 +17,8 @@ async def async_setup_entry(
 
 
 class JuraFinishedEvent(JuraEntity, EventEntity):
-    """Fired on the Enjoy screen (product or process finished)."""
+    """Fired when a product (Enjoy screen) or a process (rinsing, cleaning...)
+    is finished."""
 
     _attr_icon = "mdi:coffee"
     _attr_event_types = ["finished"]

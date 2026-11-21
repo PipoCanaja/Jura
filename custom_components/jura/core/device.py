@@ -15,10 +15,13 @@ from .progress import STATE_ENJOY, Progress, decode
 _LOGGER = logging.getLogger(__name__)
 
 COMMAND_TIME = 15
-# progress polling, in seconds
-# processes the machine runs on its own, missing from the XML PROCESSES
-IMPLICIT_PROCESSES = {0x22: "CoffeeRinse"}  # rinsing at switch-off (state 0x23)
 
+# processes the machine runs on its own, missing from the XML PROCESSES
+IMPLICIT_PROCESSES = {
+    0x22: "CoffeeRinse",  # rinsing at switch-on and switch-off (state 0x23)
+}
+
+# progress polling, in seconds
 POLL_IDLE = 5
 POLL_TRACKING = 1
 # fast polling after a start command, until the first progress frame
@@ -211,8 +214,10 @@ class Device:
     def register_finished(self, handler: Callable):
         """handler(name: str | None, code: int, last_progress: int | None)
 
-        The Enjoy screen also follows an interrupted product: last_progress
-        (the last % seen while preparing) tells them apart.
+        Called when a product reaches the Enjoy screen, or when a process
+        (rinsing, cleaning...) stops running. An interrupted product also
+        ends on the Enjoy screen: last_progress (the last % seen while
+        preparing) tells them apart.
         """
         self.updates_finished.append(handler)
 
@@ -232,7 +237,9 @@ class Device:
                         self.update_progress(data)
                     except Exception as e:
                         # never let a bad frame stop the polling loop
-                        _LOGGER.warning("progress decode error: %s", data.hex(), exc_info=e)
+                        _LOGGER.warning(
+                            "progress decode error: %s", data.hex(), exc_info=e
+                        )
                 await asyncio.sleep(POLL_TRACKING if self.tracking else POLL_IDLE)
         finally:
             self._progress_task = None
