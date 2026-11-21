@@ -322,3 +322,28 @@ def test_device_switch_off_rinse_finished():
     device.update_progress(frame(SWITCH_OFF_RINSE_END))
     device.update_progress(frame(SWITCH_OFF_RINSE_END))
     assert events == [("CoffeeRinse", 0x22, 73)]
+
+
+# real espresso (code 0x02), 2026-11-21: grinding (strength 2 of 3) then
+# coffee water 0 -> 10 of 10, p[12] the product progress in 10 % steps
+ESPRESSO = [
+    ("2a 39 02 02 03 00 0d ff ff ff ff 22 ff ff 11 00 00 ff 00 00", "grinding", 0),
+    ("2a 3c 02 02 03 00 0a ff ff ff ff 22 ff ff 11 00 00 ff 00 00", "coffee_water", 0),
+    ("2a 3c 02 02 03 04 0a ff ff ff ff 22 ff ff 11 00 28 ff 00 00", "coffee_water", 40),
+    ("2a 3c 02 02 03 0a 0a ff ff ff ff 22 ff ff 11 00 64 ff 00 00", "coffee_water", 100),
+]
+ESPRESSO_ENJOY = "2a 3e 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+
+
+def test_device_espresso():
+    device, _ = make_device()
+    events = []
+    device.register_finished(lambda name, code, last: events.append((code, last)))
+    device.update_progress(frame(IDLE))
+    for f, phase, percent in ESPRESSO:
+        device.update_progress(frame(f))
+        assert device.progress.phase == phase
+        assert device.progress_percent() == percent
+    assert decode(frame(ESPRESSO[0][0])).strength == 2
+    device.update_progress(frame(ESPRESSO_ENJOY))
+    assert events == [(0x02, 100)]
