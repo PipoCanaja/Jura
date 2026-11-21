@@ -56,6 +56,7 @@ class JuraRefreshStatsButton(JuraEntity, ButtonEntity):
         try:
             await self.device.read_statistics(force_update=True)
             await self.device.read_alerts()
+            await self.device.read_maintenance(force_update=True)
             _LOGGER.info("Successfully refreshed Jura statistics and alerts")
         except Exception as e:
             _LOGGER.error(f"Error refreshing Jura statistics: {e}")

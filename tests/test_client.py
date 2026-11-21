@@ -133,3 +133,37 @@ def test_write_error_is_raised_to_caller(monkeypatch):
             return str(e)
 
     assert run(main()) == "write not permitted"
+
+
+def test_statistics_requests_do_not_overlap():
+    async def go():
+        return await scenario()
+
+    async def scenario():
+        client     = Client.__new__(Client)
+        client.stats_lock = asyncio.Lock()
+        active = []
+        overlaps = []
+
+        async def fake(timeout, retries, stats_type):
+            if active:
+                overlaps.append(stats_type)
+            active.append(stats_type)
+            await asyncio.sleep(0.01)
+            active.remove(stats_type)
+            return bytes([stats_type])
+
+        async def connected(timeout=None):
+            return True
+
+        client._read_statistics = fake
+        client.wait_connected = connected
+        results = await asyncio.gather(
+            client.read_statistics_data(stats_type=1),
+            client.read_statistics_data(stats_type=4),
+            client.read_statistics_data(stats_type=8),
+        )
+        assert results == [b"\x01", b"\x04", b"\x08"]
+        assert overlaps == []
+
+    run(go())

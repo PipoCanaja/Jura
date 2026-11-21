@@ -41,6 +41,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             machine["alerts"],
             machine["key"],
             service_info.device,
+            machine["maintenance"],
         )
         device.update_ble(service_info.advertisement)
 
