@@ -88,7 +88,7 @@ def test_decode_cappuccino():
         assert p.preparing and p.code == 0x04, raw
         assert (p.phase, p.phase_ratio, p.ratio) == (phase, phase_ratio, ratio), raw
 
-    # grinding: current/max is the coffee strength
+    # grinding: p[0] / p[1] are the coffee strength (current / at start)
     p = decode(frame(CAPPUCCINO[0][0]))
     assert (p.current, p.max, p.strength) == (5, 5, 5)
 
@@ -324,7 +324,8 @@ def test_device_switch_off_rinse_finished():
     assert events == [("CoffeeRinse", 0x22, 73)]
 
 
-# real espresso (code 0x02), 2026-11-21: grinding (strength 2 of 3) then
+# real espresso (code 0x02), 2026-11-21, started at strength 3 and turned
+# down to 2 on the machine: p[0] = 2 (current), p[1] = 3 (start); then
 # coffee water 0 -> 10 of 10, p[12] the product progress in 10 % steps
 ESPRESSO = [
     ("2a 39 02 02 03 00 0d ff ff ff ff 22 ff ff 11 00 00 ff 00 00", "grinding", 0),
@@ -344,6 +345,9 @@ def test_device_espresso():
         device.update_progress(frame(f))
         assert device.progress.phase == phase
         assert device.progress_percent() == percent
-    assert decode(frame(ESPRESSO[0][0])).strength == 2
+    for f, _, _ in ESPRESSO:
+        progress = decode(frame(f))
+        assert (progress.strength, progress.strength_start) == (2, 3)
+    assert decode(frame(ESPRESSO_ENJOY)).strength is None
     device.update_progress(frame(ESPRESSO_ENJOY))
     assert events == [(0x02, 100)]

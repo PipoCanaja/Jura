@@ -254,5 +254,9 @@ class JuraProgressSensor(JuraProgressEntity):
             "current": progress.current,
             "max": progress.max,
             "strength": progress.strength,
+            "strength_start": progress.strength_start,
+            "strength_max": self.device.strength_max(progress.code)
+            if progress.strength is not None
+            else None,
             "product": self.device.code_name(progress.code),
         }
