@@ -11,7 +11,8 @@ on a real machine):
     payload  bytes after state/code (and after 0x8F), with raw[15] removed:
              p[cur] / p[max] depend on the phase (PHASES below)
              p[12] = progress of the whole product (all phases), by steps
-                     of 10 (cappuccino: 0-50 % milk, 50-90 % coffee)
+                     of 10 (cappuccino: 0-50 % milk, 50-90 % coffee); stays 0
+                     for some single-phase products (milk foam)
 
 Grinding phases (0x31, 0x39) carry the coffee strength (actual / max) in
 p[0] / p[1], not a progress. Extended frames (0x8F) carry current / max of a
@@ -87,10 +88,14 @@ class Progress:
     @property
     def ratio(self) -> int | None:
         """Overall progress: p[12] for products, current / max for extended
-        frames (processes)."""
+        frames (processes) and for products without p[12] (milk foam alone
+        keeps p[12] at 0 during the whole product)."""
         if self.extended:
             return self.phase_ratio
-        return self.percent
+        if self.percent:
+            return self.percent
+        phase = self.phase_ratio
+        return phase if phase is not None else self.percent
 
 
 def _get(payload: bytes, index: int) -> int | None:

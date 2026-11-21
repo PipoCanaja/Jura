@@ -101,6 +101,8 @@ class Device:
         self.updates_finished: list[Callable] = []
         self.tracking_until = 0
         self._progress_task: asyncio.Task | None = None
+        # last progress (%) seen while preparing, sent with the finished event
+        self._last_percent: int | None = None
 
     @property
     def mac(self) -> str:
@@ -239,7 +241,11 @@ class Device:
         self.updates_progress.append(handler)
 
     def register_finished(self, handler: Callable):
-        """handler(product_or_process_name: str | None, code: int)"""
+        """handler(name: str | None, code: int, last_progress: int | None)
+
+        The Enjoy screen also follows an interrupted product: last_progress
+        (the last % seen while preparing) tells them apart.
+        """
         self.updates_finished.append(handler)
 
     async def _progress_loop(self):
@@ -270,15 +276,22 @@ class Device:
 
         if progress.preparing:
             self.track(TRACK_GRACE)
+            percent = self.progress_percent()
+            if percent is not None:
+                self._last_percent = percent
 
         if prev is not None and progress.state == STATE_ENJOY:
             # new Enjoy screen, or a new product finished while we were not
             # looking (the lingering Enjoy frame is flagged invalid)
             if prev.state != STATE_ENJOY or (prev.invalid and not progress.invalid):
                 name = self.code_name(progress.code)
-                _LOGGER.debug("finished: %s (0x%02X)", name, progress.code)
+                last = self._last_percent
+                self._last_percent = None
+                _LOGGER.debug(
+                    "finished: %s (0x%02X), last progress %s %%", name, progress.code, last
+                )
                 for handler in self.updates_finished:
-                    handler(name, progress.code)
+                    handler(name, progress.code, last)
 
         if prev is None or prev.raw != progress.raw:
             for handler in self.updates_progress:
