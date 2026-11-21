@@ -10,6 +10,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
@@ -17,6 +18,9 @@ from homeassistant.helpers.event import async_track_time_interval
 from .core import DOMAIN
 from .core.entity import JuraEntity
 from .core.progress import PHASE_NAMES
+
+
+from .core.maintenance import NAMES as MAINTENANCE_NAMES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,12 +43,22 @@ async def async_setup_entry(
     # Create alert sensors
     entities.append(JuraAlertSensor(device))
 
+    # Debug (fork only): last raw progress frame
+    entities.append(JuraRawProgressSensor(device))
+
     # Progress sensors (from the progress characteristic)
     entities += [
         JuraMachineStateSensor(device),
         JuraPhaseSensor(device),
         JuraProgressSensor(device),
     ]
+
+
+    # Maintenance sensors (process types listed by the machine XML)
+    for kind in device.maintenance["counters"]:
+        entities.append(JuraMaintenanceCounterSensor(device, kind))
+    for kind in device.maintenance["percent"]:
+        entities.append(JuraMaintenancePercentSensor(device, kind))
 
     async_add_entities(entities)
 
@@ -56,6 +70,7 @@ async def async_setup_entry(
         try:
             await device.read_statistics()
             await device.read_alerts()
+            await device.read_maintenance()
         except Exception as ex:
             # we log as info as this is expected if the device is off
             _LOGGER.info(f"Error refreshing statistics: {ex}")
@@ -178,6 +193,35 @@ class JuraAlertSensor(JuraEntity, SensorEntity):
             self.async_write_ha_state()
 
 
+class JuraRawProgressSensor(JuraEntity, SensorEntity):
+    """Debug sensor: last decrypted progress frame (5a401527), as hex."""
+
+    _attr_icon = "mdi:hexadecimal"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, device):
+        super().__init__(device, "progress_raw")
+        self._attr_name = f"{device.name} Progress Raw"
+        device.register_debug_update(self.internal_update)
+
+    @property
+    def native_value(self) -> str | None:
+        last = self.device.client.tracer.last.get("1527")
+        return last["plain"] if last else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        tracer = self.device.client.tracer
+        progress = tracer.last.get("1527") or {}
+        status = tracer.last.get("1524") or {}
+        return {
+            "progress_time": progress.get("t"),
+            "status": status.get("plain"),
+            "status_time": status.get("t"),
+            "recording": tracer.recording is not None,
+        }
+
 class JuraProgressEntity(JuraEntity, SensorEntity):
     """Base class for sensors fed by the progress characteristic."""
 
@@ -188,6 +232,24 @@ class JuraProgressEntity(JuraEntity, SensorEntity):
     def internal_update(self):
         if self.hass is not None:
             self.async_write_ha_state()
+
+
+
+
+class JuraMaintenanceSensor(JuraEntity, SensorEntity):
+    """Base class for maintenance statistics sensors."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, device, kind: str, attr: str):
+        self.kind = kind
+        super().__init__(device, attr)
+        device.register_maintenance_update(self.internal_update)
+
+    def internal_update(self):
+        if self.hass is not None:
+            self.async_write_ha_state()
+
 
 
 class JuraMachineStateSensor(JuraProgressEntity):
@@ -260,3 +322,35 @@ class JuraProgressSensor(JuraProgressEntity):
             else None,
             "product": self.device.code_name(progress.code),
         }
+
+
+class JuraMaintenanceCounterSensor(JuraMaintenanceSensor):
+    """Number of maintenance processes done (cleanings, descalings...)."""
+
+    _attr_icon = "mdi:counter"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+    def __init__(self, device, kind: str):
+        super().__init__(device, kind, f"{kind.lower()}_count")
+        self._attr_name = f"{device.name} {MAINTENANCE_NAMES[kind]} Count"
+
+    @property
+    def native_value(self) -> int | None:
+        return self.device.maintenance_counters.get(self.kind)
+
+
+class JuraMaintenancePercentSensor(JuraMaintenanceSensor):
+    """Maintenance wear in %, as shown by the J.O.E. app: 0 % right after the
+    maintenance, 100 % when it is due (cleaning, filter change, descaling)."""
+
+    _attr_icon = "mdi:progress-wrench"
+    _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, device, kind: str):
+        super().__init__(device, kind, f"{kind.lower()}_percent")
+        self._attr_name = f"{device.name} {MAINTENANCE_NAMES[kind]} Wear"
+
+    @property
+    def native_value(self) -> int | None:
+        return self.device.maintenance_percent.get(self.kind)

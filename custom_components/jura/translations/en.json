@@ -7,5 +7,67 @@
         }
       }
     }
+  },
+  "services": {
+    "raw_read": {
+      "name": "Raw read (debug)",
+      "description": "Read a BLE characteristic and return raw and decrypted hex.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "Jura machine (optional if only one)."
+        },
+        "uuid": {
+          "name": "Characteristic",
+          "description": "27, 1527, 5a401527 or a full UUID."
+        }
+      }
+    },
+    "raw_write": {
+      "name": "Raw write (debug)",
+      "description": "Write hex bytes to a BLE characteristic. Can send any command to the machine: use with care.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "Jura machine (optional if only one)."
+        },
+        "uuid": {
+          "name": "Characteristic",
+          "description": "29 (P_MODE), 1525, 5a401529 or a full UUID."
+        },
+        "data": {
+          "name": "Data",
+          "description": "Hex bytes before encryption, e.g. 00 47 FF. With encryption, byte 0 is replaced by the key."
+        },
+        "encrypt": {
+          "name": "Encrypt",
+          "description": "Encrypt with the machine key (default on)."
+        }
+      }
+    },
+    "record_start": {
+      "name": "Start recording (debug)",
+      "description": "Keep the connection open and record every BLE frame, progress and status read every second.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "Jura machine (optional if only one)."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "Auto stop after this many seconds (10-3600, default 600)."
+        }
+      }
+    },
+    "record_stop": {
+      "name": "Stop recording (debug)",
+      "description": "Stop recording and save a JSONL file in the config folder.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "Jura machine (optional if only one)."
+        }
+      }
+    }
   }
 }
