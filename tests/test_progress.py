@@ -35,13 +35,16 @@ def test_decode_hot_water():
     assert (p.current, p.max, p.percent) == (4, 5, 80)
     assert p.preparing
     assert p.ratio == 80
+    assert p.phase_ratio == 80
 
 
 def test_decode_hot_water_sequence():
-    values = [(decode(frame(f)).current, decode(frame(f)).ratio) for f in HOT_WATER_70]
-    # current/max is finer than the machine percentage (30 % for 4/14)
-    assert values == [(0, 0), (4, 29), (7, 50), (14, 100)]
-    assert decode(frame(HOT_WATER_70[1])).percent == 30
+    values = [
+        (decode(frame(f)).current, decode(frame(f)).phase_ratio, decode(frame(f)).ratio)
+        for f in HOT_WATER_70
+    ]
+    # phase current/max is finer than the machine percentage (30 % for 4/14)
+    assert values == [(0, 0, 0), (4, 29, 30), (7, 50, 50), (14, 100, 100)]
 
 
 def test_decode_enjoy():
@@ -65,6 +68,29 @@ def test_decode_extended():
     p = decode(frame("2a 74 24 8f 03 0a 00 00 00 00 00 00 00 00 00 00 00 00 00 00"))
     assert p.extended and p.phase is None
     assert (p.current, p.max) == (3, 10)
+    assert p.ratio == 30
+
+
+# real cappuccino, 2026-11-21: grinding, heating, milk foam, coffee water, Enjoy
+CAPPUCCINO = [
+    ("2a 31 04 05 05 00 0a ff ff 00 1d 22 00 00 11 00 00 ff 00 00", "milk_grinding", None, 0),
+    ("2a 21 04 8f 03 0a 00 00 00 00 00 00 00 00 00 00 00 00 00 00", None, 30, 30),
+    ("2a 34 04 05 05 00 0a ff ff 0b 1d 22 00 00 11 00 14 ff 00 00", "milk_foam", 38, 20),
+    ("2a 34 04 05 05 00 0a ff ff 1d 1d 22 00 00 11 00 32 ff 00 00", "milk_foam", 100, 50),
+    ("2a 37 04 05 05 05 0a ff ff 1d 1d 22 00 00 11 00 46 ff 00 00", "milk_coffee_water", 50, 70),
+    ("2a 37 04 05 05 09 0a ff ff 1d 1d 22 00 00 11 00 5a ff 00 00", "milk_coffee_water", 90, 90),
+]
+
+
+def test_decode_cappuccino():
+    for raw, phase, phase_ratio, ratio in CAPPUCCINO:
+        p = decode(frame(raw))
+        assert p.preparing and p.code == 0x04, raw
+        assert (p.phase, p.phase_ratio, p.ratio) == (phase, phase_ratio, ratio), raw
+
+    # grinding: current/max is the coffee strength
+    p = decode(frame(CAPPUCCINO[0][0]))
+    assert (p.current, p.max, p.strength) == (5, 5, 5)
 
 
 def make_device() -> tuple[Device, list]:
@@ -109,6 +135,20 @@ def test_device_no_event_on_startup():
     device, finished = make_device()
     device.update_progress(frame(ENJOY))
     assert finished == []
+
+
+def test_device_cappuccino_percent():
+    device, finished = make_device()
+    device.products.append({"@Code": "04", "@Name": "Cappuccino"})
+    percents = []
+    for raw, *_ in CAPPUCCINO:
+        device.update_progress(frame(raw))
+        percents.append(device.progress_percent())
+    device.update_progress(frame("2a 3e 04 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"))
+    # heating inside the product counts as "not started yet"
+    assert percents == [0, 0, 20, 50, 70, 90]
+    assert device.progress_percent() is None
+    assert finished == ["Cappuccino"]
 
 
 def test_device_tracking_and_labels():

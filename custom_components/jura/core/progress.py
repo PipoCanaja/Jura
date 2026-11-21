@@ -10,7 +10,12 @@ on a real machine):
     raw[15]  0x01 = progress invalid (idle, or the lingering Enjoy screen)
     payload  bytes after state/code (and after 0x8F), with raw[15] removed:
              p[cur] / p[max] depend on the phase (PHASES below)
-             p[12] = percentage of the current phase, by steps of 10
+             p[12] = progress of the whole product (all phases), by steps
+                     of 10 (cappuccino: 0-50 % milk, 50-90 % coffee)
+
+Grinding phases (0x31, 0x39) carry the coffee strength (actual / max) in
+p[0] / p[1], not a progress. Extended frames (0x8F) carry current / max of a
+process, or of the heating step in the middle of a product (state 0x21).
 """
 
 from dataclasses import dataclass, field
@@ -36,6 +41,9 @@ PHASES = {
     0x43: ("steam", 6, 7),
 }
 BYPASS = ("bypass_water", 6, 7)
+
+# phases where current / max is the coffee strength, not a progress
+STRENGTH_PHASES = {0x31, 0x39}
 
 PHASE_NAMES = sorted({v[0] for v in PHASES.values()} | {BYPASS[0]})
 
@@ -63,10 +71,25 @@ class Progress:
         return self.state == STATE_ENJOY
 
     @property
-    def ratio(self) -> int | None:
-        """Fine percentage from current/max, else the coarse p[12]."""
+    def strength(self) -> int | None:
+        """Coffee strength during grinding phases."""
+        return self.current if self.state in STRENGTH_PHASES else None
+
+    @property
+    def phase_ratio(self) -> int | None:
+        """Progress of the current phase or process step, from current / max."""
+        if self.state in STRENGTH_PHASES:
+            return None
         if self.current is not None and self.max:
             return min(100, round(self.current * 100 / self.max))
+        return None
+
+    @property
+    def ratio(self) -> int | None:
+        """Overall progress: p[12] for products, current / max for extended
+        frames (processes)."""
+        if self.extended:
+            return self.phase_ratio
         return self.percent
 
 
