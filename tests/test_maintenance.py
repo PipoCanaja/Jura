@@ -1,3 +1,4 @@
+from custom_components.jura.core.maintenance import parse_counters
 from custom_components.jura.core.client import stats_request
 from custom_components.jura.core.maintenance import (
     get_maintenance,
@@ -86,3 +87,17 @@ def test_parse_percent_real_frame():
     data = bytes.fromhex("50 32 ff" + " 00" * 197)
     kinds = ["Cleaning", "FilterChange", "Decalc"]
     assert parse_percent(data, kinds) == {"Cleaning": 80, "FilterChange": 50}
+
+
+def test_parse_counters_real_frame():
+    # real machine 2026-11-21: 2 bytes per position, big endian
+    data = bytes.fromhex("00 2b 00 1c 00 01 01 a0 19 80 01 50" + " 00" * 188)
+    kinds = ["Cleaning", "FilterChange", "Decalc", "CappuRinse", "CoffeeRinse", "CappuClean"]
+    assert parse_counters(data, kinds) == {
+        "Cleaning": 43,
+        "FilterChange": 28,
+        "Decalc": 1,
+        "CappuRinse": 416,
+        "CoffeeRinse": 6528,
+        "CappuClean": 336,
+    }
