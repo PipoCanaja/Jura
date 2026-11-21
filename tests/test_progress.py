@@ -297,3 +297,28 @@ def test_device_cappu_clean_sequence():
     # next frame read after reconnecting is idle
     device.update_progress(frame(IDLE))
     assert events == [("CappuClean", 67)]
+
+
+# real switch-off (2026-11-21): state 0x23 "Rinse process", code 0x22 (not
+# in the XML PROCESSES), extended frames, stops at 11/15 flagged invalid,
+# then status bit 47 "SwitchOff Delay active"
+SWITCH_OFF_RINSE = [
+    "2a 23 22 8f 01 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+    "2a 23 22 8f 08 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+    "2a 23 22 8f 0b 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+]
+SWITCH_OFF_RINSE_END = "2a 23 22 8f 0b 0f 00 00 00 00 00 00 00 00 00 01 00 00 00 00"
+
+
+def test_device_switch_off_rinse_finished():
+    device, _ = make_device()
+    events = []
+    device.register_finished(lambda name, code, last: events.append((name, code, last)))
+    device.update_progress(frame(ENJOY_LINGERING))
+    for f in SWITCH_OFF_RINSE:
+        device.update_progress(frame(f))
+        assert device.progress.preparing
+    assert device.progress_percent() == 73
+    device.update_progress(frame(SWITCH_OFF_RINSE_END))
+    device.update_progress(frame(SWITCH_OFF_RINSE_END))
+    assert events == [("CoffeeRinse", 0x22, 73)]

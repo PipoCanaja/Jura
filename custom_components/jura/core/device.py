@@ -16,6 +16,9 @@ _LOGGER = logging.getLogger(__name__)
 
 COMMAND_TIME = 15
 # progress polling, in seconds
+# processes the machine runs on its own, missing from the XML PROCESSES
+IMPLICIT_PROCESSES = {0x22: "CoffeeRinse"}  # rinsing at switch-off (state 0x23)
+
 POLL_IDLE = 5
 POLL_TRACKING = 1
 # fast polling after a start command, until the first progress frame
@@ -254,10 +257,11 @@ class Device:
             prev is not None
             and prev.preparing
             and not progress.preparing
-            and prev.code in self.processes
+            and not self.product_name(prev.code)
         ):
-            # processes (milk rinsing...) show no Enjoy screen: their last
-            # frame is just flagged invalid
+            # processes (milk rinsing, switch-off rinsing...) show no Enjoy
+            # screen: their last frame is just flagged invalid. Some, like
+            # the switch-off rinsing, are not listed in the machine XML
             self._finished(prev.code)
 
         if prev is None or prev.raw != progress.raw:
@@ -282,7 +286,11 @@ class Device:
         return None
 
     def code_name(self, code: int) -> str | None:
-        return self.product_name(code) or self.processes.get(code)
+        return (
+            self.product_name(code)
+            or self.processes.get(code)
+            or IMPLICIT_PROCESSES.get(code)
+        )
 
     def progress_percent(self) -> int | None:
         """Overall progress of the running product or process, in %."""
