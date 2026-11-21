@@ -14,8 +14,10 @@ on a real machine):
                      of 10 (cappuccino: 0-50 % milk, 50-90 % coffee); stays 0
                      for some single-phase products (milk foam)
 
-Grinding phases (0x31, 0x39) carry the coffee strength (actual / max) in
-p[0] / p[1], not a progress. Extended frames (0x8F) carry current / max of a
+Coffee phases (grinding 0x31 / 0x39, coffee water 0x37 / 0x3C) carry the
+coffee strength in p[0] (current) and p[1] (value at the start of the
+product): a real espresso started at 3 and turned down to 2 on the machine
+gave p[0] = 2, p[1] = 3. In grinding phases they are not a progress. Extended frames (0x8F) carry current / max of a
 process, or of the heating step in the middle of a product (state 0x21).
 """
 
@@ -44,8 +46,10 @@ PHASES = {
 }
 BYPASS = ("bypass_water", 6, 7)
 
-# phases where current / max is the coffee strength, not a progress
+# phases where p[0] / p[1] are the coffee strength, not a progress
 STRENGTH_PHASES = {0x31, 0x39}
+# phases that carry the coffee strength in p[0] / p[1]
+COFFEE_PHASES = STRENGTH_PHASES | {0x37, 0x3C}
 
 PHASE_NAMES = sorted({v[0] for v in PHASES.values()} | {BYPASS[0]})
 
@@ -80,8 +84,20 @@ class Progress:
 
     @property
     def strength(self) -> int | None:
-        """Coffee strength during grinding phases."""
-        return self.current if self.state in STRENGTH_PHASES else None
+        """Current coffee strength, during coffee phases."""
+        return self._payload(0) if self.state in COFFEE_PHASES else None
+
+    @property
+    def strength_start(self) -> int | None:
+        """Coffee strength at the start of the product (before any change on
+        the machine), during coffee phases."""
+        return self._payload(1) if self.state in COFFEE_PHASES else None
+
+    def _payload(self, index: int) -> int | None:
+        if self.invalid or self.extended or index >= len(self.payload):
+            return None
+        value = self.payload[index]
+        return None if value == NO_VALUE else value
 
     @property
     def phase_ratio(self) -> int | None:

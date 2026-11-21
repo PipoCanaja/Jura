@@ -311,6 +311,18 @@ class Device:
         for handler in self.updates_finished:
             handler(name, code, last)
 
+    def strength_max(self, code: int) -> int | None:
+        """Number of coffee strength steps of a product, from the XML."""
+        for product in self.products:
+            try:
+                if int(product["@Code"], 16) != code:
+                    continue
+            except (KeyError, ValueError):
+                continue
+            items = as_list((product.get("COFFEE_STRENGTH") or {}).get("ITEM"))
+            return len(items) or None
+        return None
+
     def product_name(self, code: int) -> str | None:
         for product in self.products:
             try:
