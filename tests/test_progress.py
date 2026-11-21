@@ -90,7 +90,7 @@ def test_decode_cappuccino():
 
     # grinding: p[0] / p[1] are the coffee strength (current / at start)
     p = decode(frame(CAPPUCCINO[0][0]))
-    assert (p.current, p.max, p.strength) == (5, 5, 5)
+    assert (p.current, p.max, p.strength, p.strength_start) == (None, None, 5, 5)
 
 
 def make_device() -> tuple[Device, list]:
