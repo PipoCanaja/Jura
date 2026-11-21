@@ -20,6 +20,8 @@ async def async_setup_entry(
     add_entities(
         [
             JuraMakeButton(device, "make"),
+            JuraCommandButton(device, "cancel", "mdi:close-circle-outline"),
+            JuraCommandButton(device, "next_step", "mdi:skip-next"),
             JuraRefreshStatsButton(device),
         ]
     )
@@ -34,6 +36,17 @@ class JuraMakeButton(JuraEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         self.device.start_product()
+
+
+class JuraCommandButton(JuraEntity, ButtonEntity):
+    """Cancel or skip to the next step of the running product."""
+
+    def __init__(self, device, attr: str, icon: str):
+        super().__init__(device, attr)
+        self._attr_icon = icon
+
+    async def async_press(self) -> None:
+        getattr(self.device, self.attr)()
 
 
 class JuraRefreshStatsButton(JuraEntity, ButtonEntity):

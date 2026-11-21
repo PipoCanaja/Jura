@@ -380,6 +380,14 @@ class Device:
             return progress.phase
         return f"state 0x{progress.state:02X}"
 
+    def cancel(self):
+        """Cancel the running product or process."""
+        self.client.send(bytes([0x00, 0x47, 0xFF]), uuid=UUIDs.P_MODE)
+
+    def next_step(self):
+        """Skip to the next step of the running product or process."""
+        self.client.send(bytes([0x00, 0x47, 0x01]), uuid=UUIDs.P_MODE)
+
     def command(self) -> bytes:
         data = bytearray(18)
 
