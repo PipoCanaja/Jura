@@ -219,3 +219,33 @@ def test_device_interrupted_milk_foam():
     assert percents == [0, 0, 47, 58]
     # interrupted at 58 %: the event carries the last progress seen
     assert events == [("Milk Foam", 58)]
+
+
+# real milk system rinsing (CappuRinse, @TG:23), 2026-11-21: state 0x9A,
+# extended frames, no Enjoy screen: the last frame is flagged invalid
+CAPPU_RINSE = [
+    "2a 9a 23 8f 02 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+    "2a 9a 23 8f 07 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+    "2a 9a 23 8f 0e 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+    "2a 9a 23 8f 0f 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+]
+CAPPU_RINSE_END = "2a 9a 23 8f 0f 0f 00 00 00 00 00 00 00 00 00 01 00 00 00 00"
+
+
+def test_device_process_finished_without_enjoy():
+    device, _ = make_device()
+    device.processes[0x23] = "CappuRinse"
+    device.states[0x9A] = "Cappu Rinse process"
+    events = []
+    device.register_finished(lambda name, code, last: events.append((name, last)))
+    device.update_progress(frame(ENJOY_LINGERING))
+    percents = []
+    for f in CAPPU_RINSE:
+        device.update_progress(frame(f))
+        percents.append(device.progress_percent())
+    assert device.state_label() == "Cappu Rinse process"
+    device.update_progress(frame(CAPPU_RINSE_END))
+    device.update_progress(frame(CAPPU_RINSE_END))
+    assert percents == [13, 47, 93, 100]
+    assert events == [("CappuRinse", 100)]
+    assert device.state_label() == "idle"

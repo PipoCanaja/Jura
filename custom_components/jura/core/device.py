@@ -249,18 +249,28 @@ class Device:
             # new Enjoy screen, or a new product finished while we were not
             # looking (the lingering Enjoy frame is flagged invalid)
             if prev.state != STATE_ENJOY or (prev.invalid and not progress.invalid):
-                name = self.code_name(progress.code)
-                last = self._last_percent
-                self._last_percent = None
-                _LOGGER.debug(
-                    "finished: %s (0x%02X), last progress %s %%", name, progress.code, last
-                )
-                for handler in self.updates_finished:
-                    handler(name, progress.code, last)
+                self._finished(progress.code)
+        elif (
+            prev is not None
+            and prev.preparing
+            and not progress.preparing
+            and prev.code in self.processes
+        ):
+            # processes (milk rinsing...) show no Enjoy screen: their last
+            # frame is just flagged invalid
+            self._finished(prev.code)
 
         if prev is None or prev.raw != progress.raw:
             for handler in self.updates_progress:
                 handler()
+
+    def _finished(self, code: int):
+        name = self.code_name(code)
+        last = self._last_percent
+        self._last_percent = None
+        _LOGGER.debug("finished: %s (0x%02X), last progress %s %%", name, code, last)
+        for handler in self.updates_finished:
+            handler(name, code, last)
 
     def product_name(self, code: int) -> str | None:
         for product in self.products:
