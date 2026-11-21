@@ -86,6 +86,9 @@ class Client:
         self.queue: deque[Operation] = deque()
         self.wake = asyncio.Event()
         self.connected = asyncio.Event()
+        # statistics requests share the STATS_COMMAND / STATS_DATA pair:
+        # a second request would overwrite the first one
+        self.stats_lock = asyncio.Lock()
 
     def ping(self):
         """Keep (or open) the connection for ACTIVE_TIME seconds."""
@@ -265,6 +268,12 @@ class Client:
             _LOGGER.debug("Failed to establish connection")
             return None
 
+        async with self.stats_lock:
+            return await self._read_statistics(timeout, retries, stats_type)
+
+    async def _read_statistics(
+        self, timeout: int, retries: int, stats_type: int
+    ) -> bytes | None:
         try:
             # Send statistics request command
             # https://github.com/Jutta-Proto/protocol-bt-cpp?tab=readme-ov-file#writing-1
