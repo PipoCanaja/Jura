@@ -1,0 +1,54 @@
+# Debug services (fork only)
+raw_read:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: jura
+    uuid:
+      required: true
+      example: "27"
+      selector:
+        text:
+
+raw_write:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: jura
+    uuid:
+      required: true
+      example: "29"
+      selector:
+        text:
+    data:
+      required: true
+      example: "00 47 FF"
+      selector:
+        text:
+    encrypt:
+      default: true
+      selector:
+        boolean:
+
+record_start:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: jura
+    duration:
+      default: 600
+      selector:
+        number:
+          min: 10
+          max: 3600
+          unit_of_measurement: s
+
+record_stop:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: jura
