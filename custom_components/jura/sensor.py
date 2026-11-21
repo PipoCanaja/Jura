@@ -210,7 +210,8 @@ class JuraMaintenanceCounterSensor(JuraMaintenanceSensor):
 
 
 class JuraMaintenancePercentSensor(JuraMaintenanceSensor):
-    """Maintenance status in % as shown by the machine (cleaning, descaling...)."""
+    """Maintenance wear in %, as shown by the J.O.E. app: 0 % right after the
+    maintenance, 100 % when it is due (cleaning, filter change, descaling)."""
 
     _attr_icon = "mdi:progress-wrench"
     _attr_native_unit_of_measurement = "%"
@@ -218,7 +219,7 @@ class JuraMaintenancePercentSensor(JuraMaintenanceSensor):
 
     def __init__(self, device, kind: str):
         super().__init__(device, kind, f"{kind.lower()}_percent")
-        self._attr_name = f"{device.name} {MAINTENANCE_NAMES[kind]} Status"
+        self._attr_name = f"{device.name} {MAINTENANCE_NAMES[kind]} Wear"
 
     @property
     def native_value(self) -> int | None:
