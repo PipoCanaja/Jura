@@ -9,7 +9,10 @@ from zipfile import ZipFile
 import xmltodict
 from bleak import AdvertisementData, BLEDevice
 
-from .client import Client, UUIDs
+from .client import STATS_MAINTENANCE_COUNTERS, STATS_MAINTENANCE_PERCENT, Client, UUIDs
+from .debug import POLL_IDLE as DEBUG_POLL_IDLE
+from .debug import POLL_RECORDING, Tracer
+from .maintenance import get_maintenance, parse_counters, parse_percent
 from .progress import STATE_ENJOY, Progress, decode
 
 _LOGGER = logging.getLogger(__name__)
@@ -28,6 +31,9 @@ POLL_TRACKING = 1
 TRACK_AFTER_START = 60
 # fast polling continues this long after the last "preparing" frame
 TRACK_GRACE = 30
+
+# maintenance statistics change slowly
+MAINTENANCE_INTERVAL = 600
 SELECTS = [
     "product",  # 1
     "grinder_ratio",  # 2
@@ -68,6 +74,7 @@ class Device:
         device: BLEDevice,
         states: dict[int, str] | None = None,
         processes: dict[int, str] | None = None,
+        maintenance: dict[str, list[str]] | None = None,
     ):
         self.name = name
         self.model = model
@@ -92,6 +99,14 @@ class Device:
         self.statistics = {"total_products": None, "product_counts": {}}
         self.active_alerts = {}
 
+        # debug tools (fork only)
+        self.debug_info: dict = {}
+        self.updates_debug: list = []
+        self._debug_progress = None
+        self.client.tracer = Tracer()
+        self.client.tracer.listeners.append(self._debug_frame)
+        self.client.poll = self.debug_poll(recording=False)
+
         self.progress: Progress | None = None
         self.updates_progress: list[Callable] = []
         self.updates_finished: list[Callable] = []
@@ -99,6 +114,12 @@ class Device:
         self._progress_task: asyncio.Task | None = None
         # last progress (%) seen while preparing, sent with the finished event
         self._last_percent: int | None = None
+        # process types shown by the machine: {"counters": [...], "percent": [...]}
+        self.maintenance = maintenance or {"counters": [], "percent": []}
+        self.maintenance_counters: dict[str, int] = {}
+        self.maintenance_percent: dict[str, int] = {}
+        self.maintenance_time = 0
+        self.updates_maintenance: list[Callable] = []
 
     @property
     def mac(self) -> str:
@@ -115,6 +136,11 @@ class Device:
     def update_ble(self, advertisment: AdvertisementData):
         self.conn_info["last_seen"] = datetime.now(timezone.utc)
         self.conn_info["rssi"] = advertisment.rssi
+        self.debug_info["manufacturer_data"] = {
+            str(k): bytes(v).hex(" ")
+            for k, v in (advertisment.manufacturer_data or {}).items()
+        }
+        self.debug_info["name"] = advertisment.local_name
 
         for handler in self.updates_connect:
             handler()
@@ -126,6 +152,26 @@ class Device:
             self._progress_task = self.client.loop.create_task(self._progress_loop())
 
         for handler in self.updates_connect:
+            handler()
+
+    @staticmethod
+    def debug_poll(recording: bool) -> dict[str, float]:
+        interval = POLL_RECORDING if recording else DEBUG_POLL_IDLE
+        if recording:
+            return {UUIDs.PROGRESS: interval, UUIDs.MACHINE_STATUS: interval}
+        # progress is already polled by Device (and traced)
+        return {UUIDs.MACHINE_STATUS: interval}
+
+    def register_debug_update(self, handler: Callable):
+        self.updates_debug.append(handler)
+
+    def _debug_frame(self):
+        last = self.client.tracer.last.get("1527")
+        plain = last["plain"] if last else None
+        if plain == self._debug_progress:
+            return
+        self._debug_progress = plain
+        for handler in self.updates_debug:
             handler()
 
     def selects(self) -> list[str]:
@@ -447,6 +493,52 @@ class Device:
 
         return self.statistics
 
+    def register_maintenance_update(self, handler: Callable):
+        self.updates_maintenance.append(handler)
+
+    async def read_maintenance(self, force_update: bool = False):
+        """Read maintenance counters and percentages (every 10 min)."""
+        if not force_update and time.time() - self.maintenance_time < MAINTENANCE_INTERVAL:
+            return
+        if not self.maintenance["counters"] and not self.maintenance["percent"]:
+            return
+
+        updated = False
+
+        if self.maintenance["counters"]:
+            data = await self.client.read_statistics_data(
+                stats_type=STATS_MAINTENANCE_COUNTERS
+            )
+            if data:
+                _LOGGER.debug("Maintenance counters data: %s", bytes(data).hex(" "))
+                self.maintenance_counters = parse_counters(
+                    bytes(data), self.maintenance["counters"]
+                )
+                updated = True
+
+        if self.maintenance["percent"]:
+            data = await self.client.read_statistics_data(
+                stats_type=STATS_MAINTENANCE_PERCENT
+            )
+            if data:
+                _LOGGER.debug("Maintenance percent data: %s", bytes(data).hex(" "))
+                self.maintenance_percent = parse_percent(
+                    bytes(data), self.maintenance["percent"]
+                )
+                updated = True
+
+        if not updated:
+            return
+
+        self.maintenance_time = time.time()
+        _LOGGER.debug(
+            "Maintenance: counters=%s percent=%s",
+            self.maintenance_counters,
+            self.maintenance_percent,
+        )
+        for handler in self.updates_maintenance:
+            handler()
+
     def register_alert_update(self, handler: Callable):
         """Register a callback for alert updates."""
         self.updates_alerts.append(handler)
@@ -526,6 +618,7 @@ def get_machine(adv: bytes) -> dict | None:
 
             states = get_states(raw["JOE"])
             processes = get_processes(raw["JOE"])
+            maintenance = get_maintenance(raw["JOE"])
 
     # First byte is the encryption key
     return {
@@ -534,6 +627,7 @@ def get_machine(adv: bytes) -> dict | None:
         "alerts": alerts,
         "states": states,
         "processes": processes,
+        "maintenance": maintenance,
         "key": adv[0],
     }
 
