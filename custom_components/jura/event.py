@@ -26,8 +26,11 @@ class JuraFinishedEvent(JuraEntity, EventEntity):
         super().__init__(device, "finished")
         device.register_finished(self.on_finished)
 
-    def on_finished(self, name: str | None, code: int):
+    def on_finished(self, name: str | None, code: int, last_progress: int | None):
         if self.hass is None:
             return
-        self._trigger_event("finished", {"product": name, "code": f"{code:02X}"})
+        self._trigger_event(
+            "finished",
+            {"product": name, "code": f"{code:02X}", "last_progress": last_progress},
+        )
         self.async_write_ha_state()

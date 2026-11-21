@@ -111,7 +111,7 @@ def make_device() -> tuple[Device, list]:
     )
     device.client.ping = lambda *args: None
     finished = []
-    device.register_finished(lambda name, code: finished.append(name))
+    device.register_finished(lambda name, code, last: finished.append(name))
     return device, finished
 
 
@@ -186,3 +186,36 @@ def test_decode_short_frames():
     # never raise on truncated frames
     for raw in [b"", b"\x2a", b"\x2a\x41", b"\x2a\x41\x0d", bytes(10)]:
         decode(raw)
+
+
+# real milk foam started on the machine panel, quantity raised during the
+# product (max 6 -> 19), then interrupted: p[12] stays 0
+MILK_FOAM = [
+    "2a 21 08 8f 05 0a 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+    "2a 34 08 ff ff ff ff ff ff 00 06 ff ff ff 00 00 00 ff 00 00",
+    "2a 34 08 ff ff ff ff ff ff 09 13 ff ff ff 00 00 00 ff 00 00",
+    "2a 34 08 ff ff ff ff ff ff 0b 13 ff ff ff 00 00 00 ff 00 00",
+]
+MILK_FOAM_ENJOY = "2a 3e 08 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+
+
+def test_decode_milk_foam_without_percent():
+    ratios = [decode(frame(f)).ratio for f in MILK_FOAM[1:]]
+    assert ratios == [0, 47, 58]
+    assert decode(frame(MILK_FOAM[1])).phase == "milk_foam"
+
+
+def test_device_interrupted_milk_foam():
+    device, _ = make_device()
+    device.products.append({"@Code": "08", "@Name": "Milk Foam"})
+    events = []
+    device.register_finished(lambda name, code, last: events.append((name, last)))
+    device.update_progress(frame(ENJOY_LINGERING))
+    percents = []
+    for f in MILK_FOAM:
+        device.update_progress(frame(f))
+        percents.append(device.progress_percent())
+    device.update_progress(frame(MILK_FOAM_ENJOY))
+    assert percents == [0, 0, 47, 58]
+    # interrupted at 58 %: the event carries the last progress seen
+    assert events == [("Milk Foam", 58)]
