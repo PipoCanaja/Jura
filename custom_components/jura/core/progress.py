@@ -26,7 +26,11 @@ step in the middle of a product (state 0x21).
 
 The Enjoy screen (0x3E) ends a product (also an interrupted one) and stays
 for a while, flagged invalid. Processes have no Enjoy screen: their last
-frame is just flagged invalid. State 0xFF ("P_Mode") is a machine menu.
+frame is just flagged invalid, or they end on a "finished" screen
+(FINISH_STATES), which can be followed by another one: a milk system
+cleaning (CappuClean) ends on 0x95 "Cappu Clean finish", then 0x65 "Filter
+Rinse finished" with the FilterChange code, which stays as the idle screen.
+State 0xFF ("P_Mode") is a machine menu.
 """
 
 from dataclasses import dataclass, field
@@ -34,6 +38,10 @@ from dataclasses import dataclass, field
 STATE_IDLE = 0x00
 STATE_P_MODE = 0xFF
 STATE_ENJOY = 0x3E
+# "finished" screens of the processes, the same in all the machine XML:
+# Cappurinse finished, Descale finished, Filter Rinse finished,
+# Cleaning Process finished, Cappu Clean finish
+FINISH_STATES = {0x0B, 0x56, 0x65, 0x76, 0x95}
 EXTENDED = 0x8F
 NO_VALUE = 0xFF
 
@@ -80,15 +88,15 @@ class Progress:
         """A product or a process is running."""
         # 0xFF = "P_Mode": the machine shows a menu (e.g. the maintenance
         # menu before a cleaning), nothing is being prepared
-        return not self.invalid and self.state not in (
-            STATE_IDLE,
-            STATE_ENJOY,
-            STATE_P_MODE,
+        return (
+            not self.invalid
+            and self.state not in (STATE_IDLE, STATE_ENJOY, STATE_P_MODE)
+            and self.state not in FINISH_STATES
         )
 
     @property
     def finished(self) -> bool:
-        return self.state == STATE_ENJOY
+        return self.state == STATE_ENJOY or self.state in FINISH_STATES
 
     @property
     def strength(self) -> int | None:
