@@ -313,3 +313,15 @@ def test_issue52():
     adv = b"*\x05\x08\x03\xe8;\x11\xad\x04\x001?\x94>\x01\xc0A\xb6(\x00\x00\x00\x00\x00\x00\x00\x00"
     device = make_device(adv)
     assert device.model == "E8 (EB)"
+
+
+def test_cancel_next_step():
+    device = make_device(b"*\x05\x08\x03\xfb;")
+    sent = []
+    device.client.send = lambda data, uuid: sent.append((data, uuid))
+
+    device.cancel()
+    device.next_step()
+
+    p_mode = "5a401529-ab2e-2548-c435-08c300000710"
+    assert sent == [(b"\x00\x47\xff", p_mode), (b"\x00\x47\x01", p_mode)]
