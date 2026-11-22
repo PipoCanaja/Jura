@@ -351,3 +351,55 @@ def test_device_espresso():
     assert decode(frame(ESPRESSO_ENJOY)).strength is None
     device.update_progress(frame(ESPRESSO_ENJOY))
     assert events == [(0x02, 100)]
+
+
+# real end of a milk system cleaning (CappuClean, @TG:21), 2026-11-22: the
+# rinsing step, then 0x95 "Cappu Clean finish", then 0x65 "Filter Rinse
+# finished" with the FilterChange code (0x26), which stays as the idle screen
+CAPPU_CLEAN_END = [
+    "2a 9a 21 8f 0b 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+    "2a 9a 21 8f 0e 0f 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+    "2a 95 21 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+    "2a 65 26 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+    "2a 65 26 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 00",
+    "2a 65 26 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 00",
+]
+
+
+def test_device_cappu_clean_finish_screens():
+    device, _ = make_device()
+    device.processes.update({0x21: "CappuClean", 0x26: "FilterChange"})
+    device.states.update(
+        {0x9A: "Cappu Rinse process", 0x95: "Cappu Clean finish",
+         0x65: "Filter Rinse finished"}
+    )
+    events = []
+    device.register_finished(lambda name, code, last: events.append((name, last)))
+    device.update_progress(frame(IDLE))
+    for f, label in CAPPU_CLEAN[2:]:
+        device.update_progress(frame(f))
+    for f in CAPPU_CLEAN_END[:2]:
+        device.update_progress(frame(f))
+        assert device.progress.preparing
+    device.update_progress(frame(CAPPU_CLEAN_END[2]))
+    assert not device.progress.preparing and device.progress.finished
+    assert device.state_label() == "Cappu Clean finish"
+    for f in CAPPU_CLEAN_END[3:]:
+        device.update_progress(frame(f))
+        assert not device.progress.preparing
+    assert events == [("CappuClean", 93)]
+    assert device.state_label() == "idle"
+
+
+def test_device_finish_screen_missed():
+    # the "Cappu Clean finish" frame was not read: the cleaning still ends
+    # with its own code, not the FilterChange code of the next screen
+    device, _ = make_device()
+    device.processes.update({0x21: "CappuClean", 0x26: "FilterChange"})
+    events = []
+    device.register_finished(lambda name, code, last: events.append(name))
+    device.update_progress(frame(IDLE))
+    device.update_progress(frame(CAPPU_CLEAN_END[1]))
+    for f in CAPPU_CLEAN_END[3:]:
+        device.update_progress(frame(f))
+    assert events == ["CappuClean"]

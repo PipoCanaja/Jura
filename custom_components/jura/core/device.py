@@ -267,8 +267,9 @@ class Device:
             and not self.product_name(prev.code)
         ):
             # processes (milk rinsing, switch-off rinsing...) show no Enjoy
-            # screen: their last frame is just flagged invalid. Some, like
-            # the switch-off rinsing, are not listed in the machine XML
+            # screen: their last frame is just flagged invalid, or they go
+            # to a "finished" screen (not preparing either). Some, like the
+            # switch-off rinsing, are not listed in the machine XML
             self._finished(prev.code)
 
         if prev is None or prev.raw != progress.raw:
